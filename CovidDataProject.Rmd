@@ -1,0 +1,183 @@
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE)
+library(magrittr)
+library(dplyr)
+library(readr)
+library(tidyr)
+library(lubridate)
+library(pander)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(cowplot)
+library(stringr)
+library(ggmap)
+```
+
+
+# Loading the Data
+
+```{r load_data}
+#confirmed COVID-19 time series cases US (trimmed to include from 01/01/2021 to 05/23/2022)
+covid.usa.ts.confirmed <- read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_confirmed_US.csv') %>%  select(UID:Combined_Key,`1/1/21`:`5/23/22`)
+
+#Confirmed COVID-19 time series deaths US (trimmed to include from 01/01/2021 to 05/23/2022) these data include the population by county
+covid.usa.ts.deaths <- read_csv('https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_time_series/time_series_covid19_deaths_US.csv') %>%
+  select(UID:Population,`1/1/21`:`5/23/22`)
+
+#Daily data summary by state for 05-23-20222
+covid.usa.daily <- read_csv("https://raw.githubusercontent.com/CSSEGISandData/COVID-19/master/csse_covid_19_data/csse_covid_19_daily_reports_us/05-23-2022.csv") 
+
+#US vaccinated people data
+vacc.people <- read_csv("https://raw.githubusercontent.com/govex/COVID-19/master/data_tables/vaccine_data/us_data/time_series/people_vaccinated_us_timeline.csv")
+```
+
+
+# Data Manipulation
+
+Combining the three data sets into a single tibble with columns of State, Date, Confirmed Cases, Confirmed Deaths, People Partially Vaccinated, and People fully Vaccinated.
+
+```{r}
+
+#Reshaping with pivot_longer and trimming to state, date, and cases/deaths columns
+
+#covid.usa.ts.confirmed
+
+my.ts.confirmed <- covid.usa.ts.confirmed %>% 
+  pivot_longer(cols = contains("/"),names_to = "Date", values_to = "confirmed_cases") %>% 
+  select(Province_State, Date, confirmed_cases) %>% 
+  group_by(Province_State, Date) %>%
+  summarise(confirmed_cases = sum(confirmed_cases)) %>% 
+  ungroup() %>% 
+  mutate(Date = mdy(Date)) %>% 
+  arrange(Province_State, Date)
+  
+my.ts.deaths <- covid.usa.ts.deaths %>%
+  pivot_longer(cols = contains("/"),names_to = "Date", values_to = "confirmed_deaths") %>% 
+  select(Province_State, Date, confirmed_deaths) %>% 
+  group_by(Province_State, Date) %>%
+  summarise(confirmed_deaths = sum(confirmed_deaths)) %>% 
+  ungroup() %>% 
+  mutate(Date = mdy(Date)) %>% 
+  arrange(Province_State, Date)
+
+#my.ts.confirmed
+#my.ts.deaths
+
+#Creating covid.usa.states.ts
+
+covid.usa.states.ts <- my.ts.confirmed %>%
+   full_join(my.ts.deaths, by = c("Province_State", "Date"))
+
+#covid.usa.states.ts
+
+
+#Appending covid.usa.states.ts with vacc.people
+
+#trimming down vacc.people
+my.vacc.people <- vacc.people %>% 
+  select(Province_State, Date, People_Fully_Vaccinated, People_Partially_Vaccinated) %>% 
+  filter(!is.na(People_Fully_Vaccinated), !is.na(People_Partially_Vaccinated))
+
+#my.vacc.people
+
+#joining
+covid.usa.states.ts <- covid.usa.states.ts %>% full_join(my.vacc.people, by = c("Province_State", "Date"))
+
+covid.usa.states.ts
+
+```
+
+## Visualizing Covid Data from 6 select states
+
+I will be selecting 3 states with the highest confirmed cases (California, Texas, and Florida) and 3 arbitrarily selected states with the mild amounts confirmed cases(West Virginia, Oregon, and Connecticut). These selections are based on the total number of cases as seen from the following table.
+
+``` {r}
+
+covid.usa.daily <- arrange(covid.usa.daily, Confirmed)
+covid.usa.daily
+```
+
+Each variable will be standardized by dividing each variable by its maximum, so that they will all fit into the same graph and still be discernible. A ratio of 1 means a variable is at it's max on that day.
+
+```{r}
+
+ 
+# #scaling values by variable/maximum so all three variables can be overlayed on the same line graph and keeping only the 6 relevant states
+
+#covid.usa.states.ts
+
+adjusted.covid.usa.states.ts <- covid.usa.states.ts %>% 
+  filter(Province_State %in% c('California', 'Texas', 'Florida', 'West Virginia', 'Oregon', 'Connecticut')) %>% 
+  group_by(Province_State) %>%
+  summarise(Date, confirmed_cases = confirmed_cases/max(confirmed_cases, na.rm = TRUE),
+          confirmed_deaths = confirmed_deaths/max(confirmed_deaths, na.rm = TRUE),
+          People_Fully_Vaccinated = People_Fully_Vaccinated/max(People_Fully_Vaccinated, na.rm = TRUE),
+          People_Partially_Vaccinated = People_Partially_Vaccinated/max(People_Partially_Vaccinated, na.rm = TRUE))
+
+#adjusted.covid.usa.states.ts
+
+ggplot(data = adjusted.covid.usa.states.ts, aes(x = Date))+
+  geom_line(aes(y = confirmed_cases), col = "red")+
+  geom_line(aes(y = confirmed_deaths), col = "blue")+
+  geom_line(aes(y = People_Fully_Vaccinated), col = "green")+
+  geom_line(aes(y = People_Partially_Vaccinated), col = "purple")+
+  xlab("Date")+
+  ylab("Standardized ratio")+
+  #scale_color_manual(name = "Variables:", values = c("Confirmed Cases" = "red", "Confirmed Deaths" = "blue", "Fully Vaccinated" = "green", "Partially Vaccinated" = "purple")) +
+  labs(title = "Standardized data by state")+
+  facet_wrap(~Province_State)
+```
+``` {r, echo=FALSE}
+#+
+  # theme(legend.position = "right")+
+  # scale_color_manual(name = "Variable", 
+  #                    values = c("Confirmed Cases" = "red", 
+  #                               "Confirmed Deaths" = "blue", 
+  #                               "People Fully Vaccinated" = "green",
+  #                               "People Partially Vacinated" = "purple"))
+  
+
+
+#making a separate legend because I can't get the ggplot one to work properly
+
+names <- c('Confirmed Cases', 'Confirmed Deaths', 'People Fully Vaccinated', 'People Partially Vaccinated')
+clrs <- c('red', 'blue', 'green', 'purple')
+ltype <- c(1, 1, 1, 1)
+plot(NULL ,xaxt='n',yaxt='n',bty='n',ylab='',xlab='', xlim=0:1, ylim=0:1)
+legend("topleft", title="Variables", legend = names, lty=ltype, lwd=2, cex=1.25,
+       bty='n', col = clrs)
+
+
+  #scale_color_manual(name = "Variables:", values = c("Confirmed Cases" = "red", "Confirmed Deaths" = "blue", "Fully Vaccinated" = "green", "Partially Vaccinated" = "purple"))
+
+
+```
+
+
+## Creating a Map visualization of cases in Oregon:
+
+How were the confirmed cases in Oregon Distributed on 4/26/21?
+```{r}
+
+loc.or.confirmed <- covid.usa.ts.confirmed %>% 
+  pivot_longer(cols = contains("/"),names_to = "Date", values_to = "confirmed_cases") %>% 
+  filter(Province_State == "Oregon", Date == "4/26/21", Lat != 0) %>% 
+  select(Lat, Long_, confirmed_cases)
+
+loc.or.confirmed
+
+ggplot(loc.or.confirmed, aes(x = Long_, y = Lat, col = confirmed_cases, size = confirmed_cases))+
+  borders("state")+
+  geom_point()+
+  scale_color_viridis_c()+
+  coord_quickmap(xlim = c(-125, -116), ylim = c(42, 46.5))+
+  xlab("Longitude") +
+  ylab("Latitude") +
+  labs(title = "Oregon Confirmed Cases Distribution of 4/26/21")
+
+
+```
+
